@@ -1,0 +1,186 @@
+---
+title: "Social_Ads_predict"
+output: html_document
+---
+
+# 加载包
+
+```{r, message = FALSE}
+library(tidyverse)
+library(effects)
+library(scatterplot3d)
+```
+
+# 读取数据
+
+```{r}
+social_network <- read_csv("~/workspace/Social_Network_Ads.csv")
+social_network
+```
+
+
+
+# 检查缺失值
+```{r}
+social_network %>%
+    summarise_all(
+        ~ sum(is.na(.))
+    )
+```
+
+# 设置训练集和测试集
+
+```{r}
+set.seed(1234)
+sample_size = round(nrow(social_network)*.70) 
+train <- sample_n(social_network, sample_size)
+train
+
+sample_id <- as.numeric(rownames(train)) 
+test <- social_network[-sample_id,]
+test
+```
+
+
+
+# 将性别和购买与否设置为因子
+
+```{r}
+train <- train %>% 
+  mutate(Gender = factor(Gender),
+         Purchased = factor(Purchased))
+train
+```
+
+#计算购买的概率和方差
+
+```{r}
+train %>% 
+  count(Purchased)
+
+prob <- tibble(p = 143/280,
+       q = 1-p,
+       var = 280*p*q)
+prob
+```
+
+# 按性别对购买行为分组，查看购买差异分布
+
+```{r}
+train %>% 
+ggplot(aes(Purchased,  fill = Gender))+
+  geom_bar()+
+  facet_grid(.~Gender)
+```
+
+性别对购买与否影响不大。
+
+# 按年龄对购买行为进行分组，查看差异 
+
+```{r, fig.width=5}
+train %>% 
+  count(Age)
+ train %>% 
+  ggplot(aes(Age, fill = Purchased))+
+  geom_bar()
+```
+
+26岁一下无人购买，26-42岁不购买人数多于购买人数，43岁以上为主要购买人数
+
+# 按估计薪水对购买行为进行分组，查看分布差异
+
+```{r}
+ train %>% 
+  ggplot(aes(EstimatedSalary, fill = Purchased))+
+  geom_histogram( bins = 100)
+```
+
+薪水2万-5万 和7万-8.5万，非购买人数多于购买人数，8.5万以上购买人数多于非购买人数，但有几处情况不是这样
+
+薪水2万以下和5万-6.5万无人购买
+
+
+```{r}
+train %>% 
+  ggplot(aes(Age, EstimatedSalary, color = Purchased)) + 
+  geom_point()
+```
+
+大致上薪水8.2万以下且年龄小于41岁无人购买。
+
+## 逻辑回归模型
+
+### 模型1
+
+```{r}
+mod1 <- glm(Purchased~EstimatedSalary+Age+Gender, family = binomial(link = "logit"), data = train)
+summary(mod1)
+```
+
+性别的p值过大，也验证了图形中反映的情况
+
+### 模型2
+
+```{r}
+mod2 <- glm(Purchased~EstimatedSalary+Age, family = binomial(link = "logit"), data = train)
+summary(mod2)
+```
+
+模型2的p值均小于0.1%，且AIC值并没有降低。
+
+
+### 指数化模型参数
+
+```{r}
+coef(mod2) %>% 
+  exp() %>% 
+  round(digits = 6)
+```
+ 
+ 在控制薪水不变的情况下，年龄每增加一个单位，购买的概率增加1的1.24次方。
+
+##
+
+```{r}
+effect_link <- Effect("EstimatedSalary", mod = mod2)
+plot(effect_link,
+  type = "link",
+  main = "EstimatedSalary effect plot\n(log odds scale)"
+)
+
+effect_link <- Effect("Age", mod = mod2)
+plot(effect_link,
+  type = "link",
+  main = "Age effect plot\n(log odds scale)"
+)
+  
+```
+ 
+ EstimatedSalary >120000 hava more residuals, and Age<30 or Age>50 have more residuals too.
+
+
+
+```{r}
+train %>%
+  mutate(fitted = fitted(mod2))
+```
+
+
+```{r,warning = FALSE}
+train %>% 
+  mutate(fitted = fitted(mod2)) %>% 
+  select(Age, EstimatedSalary, fitted) %>% 
+  scatterplot3d(color = "blue")
+```
+
+age<50 and EstimatedSalary < 70000 have the probility that less than 0.8
+
+
+
+```{r}
+prob<-predict(mod2,test,type="response")
+test
+```
+
+
+
